@@ -1,0 +1,10 @@
+llama-index-core>=0.10.20  # Use recent versions
+llama-index-llms-ollama
+llama-index-embeddings-ollama
+llama-index-utils-workflow
+qdrant-client>=1.7.3     # Check for compatibility with llama-index
+PyMuPDF                 # For fitz (PDF parsing)
+python-docx             # For DOCX parsing
+streamlit>=1.30         # Use a recent version of Streamlit
+python-dotenv           # For loading .env files
+nest_asyncio            # Might still be needed for deep async interactions depending on libraries
