@@ -4,7 +4,7 @@ import asyncio
 import logging
 import html # Standard Python HTML library
 from logging import Handler, LogRecord
-
+from typing import Optional, Tuple
 # Import from project modules
 import config
 import utils
@@ -17,7 +17,8 @@ from workflow import (
     # AnalysisResultsEvent, # Not directly used by UI
     # ContextAnalyzedEvent # Not directly used by UI
 )
-
+from llama_index.core import VectorStoreIndex
+from llama_index.core.tools import BaseTool 
 # --- Custom Logging Handler ---
 class StreamlitLogHandler(Handler):
     """Logs messages to a list in Streamlit session state."""
@@ -33,10 +34,10 @@ class StreamlitLogHandler(Handler):
             msg = self.format(record)
             # Ensure the key exists and is a list before appending
             if isinstance(st.session_state.get(self.log_list_key), list):
-                 st.session_state[self.log_list_key].append(msg + "\n")
+                st.session_state[self.log_list_key].append(msg + "\n")
             else:
-                 # If it doesn't exist or isn't a list, reset it
-                 st.session_state[self.log_list_key] = [msg + "\n"]
+                # If it doesn't exist or isn't a list, reset it
+                st.session_state[self.log_list_key] = [msg + "\n"]
         except Exception:
             self.handleError(record)
 
@@ -65,35 +66,39 @@ st.title("📄 Multi-Agent Legal Contract Analyzer")
 st.caption(f"LLM: {config.LLM_MODEL} | Embed: {config.EMBED_MODEL} | RAG: {config.QDRANT_COLLECTION} | Timeout: {config.WORKFLOW_TIMEOUT}s")
 st.markdown("---")
 
-# --- Initialization (Cached) ---
+# --- Analysis System Initialization ---
 @st.cache_resource(show_spinner="Initializing Analysis System...")
-def get_analysis_tool():
-    """Initializes the RAG tool needed by the workflow."""
-    # Run the async initialization function synchronously for caching
+def get_analysis_resources() -> Optional[Tuple[VectorStoreIndex, BaseTool]]: # <<< Cập nhật tên hàm và type hint
+    """Initializes the RAG tool and Index needed by the workflow."""
     try:
-        # Use asyncio.run() to execute the async function
-        tool = asyncio.run(initialize_analysis_system())
-        if tool is None:
-             raise RuntimeError("initialize_analysis_system returned None, indicating failure.")
-        return tool
+        # initialize_analysis_system trả về (index, law_tool)
+        resources = asyncio.run(initialize_analysis_system())
+        if resources is None:
+            raise RuntimeError("initialize_analysis_system returned None, indicating failure.")
+        return resources # Trả về tuple (index, law_tool)
     except Exception as e:
         logger.error(f"CRITICAL: Failed initialization: {e}", exc_info=True)
-        # Use st.exception for better display
         st.error(f"Fatal Error: Could not initialize system. Check logs/services.")
-        st.exception(e) # Show traceback in Streamlit
-        st.stop() # Stop app execution if initialization fails
-        return None # Should not be reached due to st.stop()
+        st.exception(e)
+        st.stop()
+        return None
 
-# Get the initialized tool
-law_tool = get_analysis_tool()
-if law_tool:
+# Get the initialized resources
+analysis_resources = get_analysis_resources()
+my_index: Optional[VectorStoreIndex] = None
+law_tool: Optional[BaseTool] = None
+
+if analysis_resources:
+    my_index, law_tool = analysis_resources # <<< Giải nén tuple
     st.sidebar.success("✅ Analysis System Initialized")
-    st.sidebar.markdown(f"**RAG Tool:** `{law_tool.metadata.name}`")
+    if law_tool and hasattr(law_tool, 'metadata'): # Kiểm tra trước khi truy cập metadata
+        st.sidebar.markdown(f"**RAG Tool:** `{law_tool.metadata.name}`")
+    else:
+        st.sidebar.markdown("**RAG Tool:** `Metadata not available`")
+    # st.sidebar.markdown(f"**Index Type:** `{type(my_index)}`") # Có thể thêm để debug
 else:
-    # This part might not be reached if st.stop() was called, but good practice
     st.sidebar.error("❌ Analysis System Initialization Failed")
     st.stop()
-
 
 # --- Session State Initialization ---
 # Use .get() with default values for safer access
@@ -104,43 +109,6 @@ st.session_state.setdefault('error_message', None)
 st.session_state.setdefault('log_messages', [])
 st.session_state.setdefault('original_contract_text', "")
 st.session_state.setdefault('annotations_data', []) # Store annotations data
-
-# # --- Custom CSS for Highlighting ---
-# st.markdown("""
-# <style>
-# .highlight {
-#     padding: 0.1em 0.3em;
-#     margin: 0 0.1em;
-#     line-height: 1;
-#     border-radius: 0.35em;
-#     cursor: help; /* Indicate tooltip is available */
-#     border-bottom: 2px dotted; /* Add dotted underline */
-# }
-# .highlight-legal { background-color: rgba(255, 193, 7, 0.3); border-color: #FFC107; } /* Yellow */
-# .highlight-logic { background-color: rgba(3, 169, 244, 0.3); border-color: #03A9F4; }  /* Blue */
-# .highlight-risk  { background-color: rgba(244, 67, 54, 0.3); border-color: #F44336; }  /* Red */
-
-# /* Optional: Style based on verification status */
-# .status-citation-incorrect-confirmed { font-weight: bold; }
-# .status-missing-mandatory-confirmed { font-weight: bold; }
-# .status-citation-needs-review { border-style: dashed; }
-# .status-contradiction-check-needed { border-style: dashed; }
-
-# /* Container for scrollable text */
-# .contract-container {
-#     height: 75vh; /* Adjust height as needed */
-#     overflow-y: scroll;
-#     border: 1px solid #e0e0e0;
-#     padding: 15px;
-#     white-space: pre-wrap; /* Preserve whitespace and wrap lines */
-#     word-wrap: break-word;
-#     background-color: #ffffff;
-#     font-family: monospace; /* Use monospace for better alignment? Optional */
-#     line-height: 1.5;
-# }
-# </style>
-# """, unsafe_allow_html=True)
-
 st.markdown("""
 <style>
 /* Base highlight style */
@@ -342,10 +310,10 @@ elif st.session_state.analysis_running:
                     # Consider using st.session_state changes to trigger rerun on main thread check
                     logger.debug(f"Appended progress: {event.progress}. Rerunning UI.")
                     try:
-                         # Need to be careful with reruns inside async callbacks
-                         pass # Avoid direct rerun, rely on state change
+                        # Need to be careful with reruns inside async callbacks
+                        pass # Avoid direct rerun, rely on state change
                     except Exception as e:
-                         logger.warning(f"Ignoring rerun error in callback: {e}")
+                        logger.warning(f"Ignoring rerun error in callback: {e}")
 
 
             workflow = MultiAgentContractReviewWorkflow(
@@ -356,7 +324,8 @@ elif st.session_state.analysis_running:
             start_event = WorkflowStartEvent(
                 contract_text=st.session_state.original_contract_text,
                 query=config.DEFAULT_QUERY,
-                tools=[law_tool] # Pass the initialized tool
+                tools=[law_tool], # Pass the initialized tool
+                index=my_index 
             )
             logger.info("Starting workflow.run...")
             # result_event = await workflow.run_event(ev=start_event) # Use run_event
@@ -423,13 +392,13 @@ elif not st.session_state.analysis_running and (st.session_state.final_report or
         # Highlight contract using annotations
         try:
             with st.spinner("Đang xử lý highlight..."):
-                 highlighted_contract_html = utils.highlight_contract_with_annotations(original_text, annotations_data)
-                 logger.info("Highlighting function completed.")
+                highlighted_contract_html = utils.highlight_contract_with_annotations(original_text, annotations_data)
+                logger.info("Highlighting function completed.")
         except Exception as high_err:
-             logger.error(f"Error during highlighting: {high_err}", exc_info=True)
-             st.error(f"Lỗi khi tạo highlight: {high_err}")
-             # Fallback to showing unhighlighted text
-             highlighted_contract_html = html.escape(original_text).replace("\n", "<br>")
+            logger.error(f"Error during highlighting: {high_err}", exc_info=True)
+            st.error(f"Lỗi khi tạo highlight: {high_err}")
+            # Fallback to showing unhighlighted text
+            highlighted_contract_html = html.escape(original_text).replace("\n", "<br>")
 
         with col1:
             st.subheader("Văn bản Hợp đồng (Highlight)")
@@ -467,8 +436,8 @@ elif not st.session_state.analysis_running and (st.session_state.final_report or
 
 # --- Fallback State (Should not be reached ideally) ---
 else:
-     logger.debug("Rendering initial/fallback state (no analysis running, no results/error).")
-     # This state might be hit briefly on initial load or if state is inconsistent
-     # It could simply pass or display a minimal placeholder if needed.
-     # For now, the input state logic at the top handles the initial view.
-     pass
+    logger.debug("Rendering initial/fallback state (no analysis running, no results/error).")
+    # This state might be hit briefly on initial load or if state is inconsistent
+    # It could simply pass or display a minimal placeholder if needed.
+    # For now, the input state logic at the top handles the initial view.
+    pass

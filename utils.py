@@ -5,7 +5,7 @@ import io
 import logging
 import re
 import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional # Added Optional
 import html
 import unicodedata
 
@@ -44,12 +44,12 @@ def extract_text_from_txt(file_content: bytes) -> str:
     try:
         # Thử các encoding phổ biến
         for encoding in ['utf-8', 'utf-16', 'latin-1', 'cp1252']:
-             try:
-                 text = file_content.decode(encoding)
-                 logger.info(f"Successfully extracted text from TXT using {encoding}.")
-                 return text
-             except UnicodeDecodeError:
-                 continue
+            try:
+                text = file_content.decode(encoding)
+                logger.info(f"Successfully extracted text from TXT using {encoding}.")
+                return text
+            except UnicodeDecodeError:
+                continue
         # Nếu tất cả thất bại, báo lỗi
         logger.error("Could not decode TXT file with common encodings.")
         raise ValueError("Could not decode TXT file with common encodings (utf-8, utf-16, latin-1, cp1252).")
@@ -117,13 +117,73 @@ def extract_json_from_response(response_text: str) -> dict:
             logger.warning("Successfully parsed JSON after removing trailing comma.")
             return parsed_json_fixed
         except json.JSONDecodeError:
-             logger.error("Failed to parse JSON even after fixing trailing comma.")
-             return {} # Trả về dict rỗng nếu vẫn không parse được
+            logger.error("Failed to parse JSON even after fixing trailing comma.")
+            return {} # Trả về dict rỗng nếu vẫn không parse được
+
+# --- Helper functions moved from meta_data.py ---
+def roman_to_int(s: str) -> Optional[int]:
+    if not s or not isinstance(s, str): return None
+    s = s.upper()
+    roman_map = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000} # Added L, C, D, M
+    i = 0; num = 0
+    valid_roman = all(char in roman_map for char in s)
+    if not valid_roman: return None
+    while i < len(s):
+        s1 = roman_map.get(s[i], 0)
+        if (i + 1) < len(s):
+            s2 = roman_map.get(s[i + 1], 0)
+            if s1 >= s2: num += s1; i += 1
+            else: num += (s2 - s1); i += 2
+        else: num += s1; i += 1
+    return num if num > 0 else None
+
+def normalize_law_name_simple(text: str) -> Optional[str]:
+    """Chuẩn hóa tên luật về dạng đơn giản (từ khóa + năm)."""
+    if not text: return None
+    text_lower = text.lower()
+    year_match = re.search(r'\b(19\d{2}|20\d{2})\b', text_lower)
+    year_str = year_match.group(1) if year_match else ""
+    
+    common_law_phrases = [
+        r"bộ luật", r"luật", r"nghị định", r"thông tư", r"quyết định", r"chỉ thị",
+        r"hiến pháp", r"pháp lệnh", r"công văn", r"nghị quyết", r"lệnh", r"thông báo",
+        r"số.*?\/.*?\/.*?\b", 
+        r"\b(số|no\.?|ngày|dated|về việc|quy định|hướng dẫn|thi hành|thực hiện|ban hành)\b",
+        r"của", r"và", r"năm", r"sửa đổi", r"bổ sung", r"thay thế", r"hợp nhất", r"liên tịch",
+        r"quốc hội", r"chính phủ", r"bộ tư pháp", r"bộ công an", r"bộ tài chính", 
+        r"bộ kế hoạch và đầu tư", r"bộ công thương", 
+        r"bộ lao động - thương binh và xã hội", r"bộ lao động thương binh và xã hội",
+        r"ngân hàng nhà nước việt nam", r"ngân hàng nhà nước",
+        r"bộ trưởng", r"thủ tướng", r"ủy ban thường vụ quốc hội", r"ủy ban thường vụ", 
+        r"chủ tịch nước", r"hội đồng thẩm phán tòa án nhân dân tối cao", r"tòa án nhân dân tối cao",
+        r"viện kiểm sát nhân dân tối cao",
+        r"khóa\s*[ivxlcdm\d]+"
+    ]
+    
+    cleaned_name = text_lower
+    for pattern in common_law_phrases:
+        cleaned_name = re.sub(pattern, "", cleaned_name, flags=re.IGNORECASE).strip()
+    
+    cleaned_name = re.sub(r"[\/\-\.\(\),:;\"“”‘’']", " ", cleaned_name)
+    cleaned_name = re.sub(r"\s+", " ", cleaned_name).strip()
+    
+    if cleaned_name.isdigit() and not year_str:
+        return None 
+
+    if cleaned_name and year_str:
+        result = f"{cleaned_name} {year_str}" if year_str not in cleaned_name else cleaned_name
+    elif cleaned_name:
+        result = cleaned_name
+    elif year_str: 
+        result = year_str
+    else:
+        unaccented_original = ''.join(c for c in text_lower if c.isalnum() or c.isspace())
+        unaccented_original = re.sub(r"\s+", " ", unaccented_original).strip()
+        return unaccented_original if unaccented_original else None
+
+    return result.strip() if result else None
 
 # --- Helper Function for Highlighting ---
-# logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-# logger = logging.getLogger(__name__)
-
 def normalize_for_matching(text: str) -> str:
     """
     Chuẩn hóa văn bản để so sánh: loại bỏ dấu câu không cần thiết,
@@ -132,20 +192,14 @@ def normalize_for_matching(text: str) -> str:
     if not text:
         return ""
     try:
-        # NFKD chuẩn hóa dấu tiếng Việt và tách các ký tự tương thích.
         text = unicodedata.normalize("NFKD", text)
-        # Loại bỏ các ký tự điều khiển kết hợp (dấu câu sau NFKD) - giữ lại bản chất chữ
         text = "".join(c for c in text if not unicodedata.combining(c))
-        # Giữ lại chữ cái, số, khoảng trắng và một số dấu câu cơ bản có thể quan trọng (-)
-        # Loại bỏ các dấu câu khác. Thay đổi regex này nếu cần giữ lại nhiều dấu hơn.
         text = re.sub(r'[^\w\s\-]', '', text, flags=re.UNICODE)
-        # Chuẩn hóa khoảng trắng: thay thế nhiều khoảng trắng bằng một, strip đầu/cuối.
         text = re.sub(r'\s+', ' ', text).strip()
         return text.lower()
     except Exception as e:
-        # Ghi lại lỗi nhưng cố gắng trả về dạng lowercase để không dừng hoàn toàn
         logger.error(f"Lỗi khi chuẩn hóa văn bản: '{text[:50]}...': {e}")
-        return text.lower() # Fallback
+        return text.lower() 
 
 def highlight_contract_with_annotations(contract_text: str, annotations: List[Dict[str, Any]]) -> str:
     """
@@ -158,153 +212,99 @@ def highlight_contract_with_annotations(contract_text: str, annotations: List[Di
         logger.info("Không có annotation nào để highlight.")
         return html.escape(contract_text).replace("\n", "<br>")
 
-    # 1. Escape toàn bộ văn bản gốc một lần để tránh XSS
     escaped_contract_text = html.escape(contract_text)
-
-    # 2. Chuẩn bị Annotations: Lọc, chuẩn hóa hint và sắp xếp
     valid_annotations = []
     for i, anno in enumerate(annotations):
         location_hint_raw = anno.get("location_hint")
         if location_hint_raw:
             normalized_hint = normalize_for_matching(location_hint_raw)
-            # Chỉ xử lý nếu hint có nội dung sau chuẩn hóa
             if normalized_hint:
-                # Lưu lại để không cần tính toán nhiều lần
                 anno['_normalized_hint'] = normalized_hint
-                # Dùng độ dài gốc để sắp xếp (ưu tiên match dài hơn trước)
                 anno['_raw_hint_len'] = len(location_hint_raw)
-                # Thêm id duy nhất để debug nếu cần
                 anno['_id'] = i
                 valid_annotations.append(anno)
             else:
-                 logger.warning(f"Annotation {i} có hint '{location_hint_raw[:30]}...' trở thành rỗng sau chuẩn hóa, bỏ qua.")
+                logger.warning(f"Annotation {i} có hint '{location_hint_raw[:30]}...' trở thành rỗng sau chuẩn hóa, bỏ qua.")
         else:
-             logger.warning(f"Annotation {i} thiếu 'location_hint', bỏ qua.")
+            logger.warning(f"Annotation {i} thiếu 'location_hint', bỏ qua.")
 
-
-    # Sắp xếp theo độ dài hint gốc giảm dần (quan trọng cho xử lý chồng chéo)
     sorted_annotations = sorted(valid_annotations, key=lambda x: x['_raw_hint_len'], reverse=True)
-
-    # 3. Xác định các đoạn cần highlight và thông tin tag (Pass 1)
-    insertions = [] # Lưu thông tin: (escaped_start, escaped_end, start_tag, end_tag, anno_id)
-    # Set này theo dõi index trong `escaped_contract_text` đã được "claim" bởi một highlight
+    insertions = [] 
     processed_escaped_indices = set()
 
     for anno in sorted_annotations:
         location_hint_raw = anno["location_hint"]
-        location_hint_raw = location_hint_raw.strip('"')
+        location_hint_raw = location_hint_raw.strip('"') # Strip quotes if present
         normalized_hint = anno["_normalized_hint"]
         anno_id = anno["_id"]
-
-        # --- Tìm tất cả các ứng viên trong văn bản gốc và xác minh ---
+        
         best_verified_match = None
-        # Regex tìm hint gốc, bỏ qua hoa/thường
         pattern_soft = re.compile(re.escape(location_hint_raw), re.IGNORECASE | re.UNICODE)
-
         match_candidates = list(pattern_soft.finditer(contract_text))
 
         if not match_candidates:
             logger.warning(f"[Anno {anno_id} WARN] Hint gốc '{location_hint_raw[:40]}...' không tìm thấy trong văn bản gốc (case-insensitive).")
             continue
 
-        # Tìm ứng viên khớp nhất sau khi chuẩn hóa
         verified_match_found = False
         for match in match_candidates:
             start, end = match.span()
             original_segment = contract_text[start:end]
             normalized_segment = normalize_for_matching(original_segment)
 
-            # Ưu tiên khớp chính xác sau chuẩn hóa
             if normalized_segment == normalized_hint:
-                # Tính toán vị trí trong văn bản đã escape
-                # Tối ưu: tính độ dài escape một lần cho các phần liên quan
-                # Lưu ý: cách tính này giả định html.escape không thay đổi độ dài quá nhiều
-                # hoặc các thay đổi được phân bố đều. Cách an toàn nhất là escape từng phần.
                 pre_text_escaped_len = len(html.escape(contract_text[:start]))
-                match_text_escaped_len = len(html.escape(original_segment)) # Escape segment đã match
+                match_text_escaped_len = len(html.escape(original_segment))
                 escaped_start = pre_text_escaped_len
                 escaped_end = pre_text_escaped_len + match_text_escaped_len
 
-                # Kiểm tra chồng chéo với các highlight đã được chọn trước đó
                 is_overlapping = False
-                for i in range(escaped_start, escaped_end):
-                    if i in processed_escaped_indices:
+                for i_idx in range(escaped_start, escaped_end):
+                    if i_idx in processed_escaped_indices:
                         is_overlapping = True
                         break
-
                 if not is_overlapping:
-                    # Tìm thấy match tốt, không chồng chéo
                     best_verified_match = match
                     best_escaped_start = escaped_start
                     best_escaped_end = escaped_end
                     verified_match_found = True
                     logger.debug(f"[Anno {anno_id} DEBUG] Xác minh khớp cho '{location_hint_raw[:30]}' tại vị trí gốc {match.span()}, escaped {best_escaped_start}-{best_escaped_end}")
-                    break # Lấy match đầu tiên hợp lệ (do đã sort theo độ dài hint)
-
-        # Nếu không tìm được match hợp lệ sau khi xác minh và kiểm tra chồng chéo
+                    break 
         if not verified_match_found:
-            if not match_candidates: # Trường hợp không có ứng viên nào từ đầu
-                 pass # Đã log warning ở trên
-            else: # Có ứng viên nhưng không khớp chuẩn hóa hoặc bị chồng chéo
-                 logger.warning(f"[Anno {anno_id} WARN] Không tìm thấy vị trí phù hợp (không chồng chéo và khớp chuẩn hóa) cho hint '{location_hint_raw[:40]}...'.")
-            continue # Bỏ qua annotation này
+            if not match_candidates:
+                pass 
+            else: 
+                logger.warning(f"[Anno {anno_id} WARN] Không tìm thấy vị trí phù hợp (không chồng chéo và khớp chuẩn hóa) cho hint '{location_hint_raw[:40]}...'.")
+            continue 
 
-        # --- Lưu thông tin để chèn tag ---
-        # Lấy thông tin từ annotation
         summary = html.escape(anno.get('summary', 'N/A'))
         details = html.escape(anno.get('details', 'N/A'))
         status = html.escape(anno.get('status', 'unknown'))
         anno_type = html.escape(anno.get('type', 'general'))
-
-        # Tạo nội dung tooltip và class CSS
         tooltip_text = f"[{anno_type.upper()}/{status}] {summary} || Chi tiết: {details}"
         css_class = f"highlight highlight-{anno_type} status-{status.lower().replace('_', '-')}"
-
-        # Tạo thẻ mở và đóng
         start_tag = f'<span class="{css_class}" title="{tooltip_text}">'
         end_tag = '</span>'
-
-        # Lưu lại thông tin cần thiết
         insertions.append((best_escaped_start, best_escaped_end, start_tag, end_tag, anno_id))
-
-        # Đánh dấu các index trong `escaped_contract_text` đã được sử dụng
-        for i in range(best_escaped_start, best_escaped_end):
-            processed_escaped_indices.add(i)
-
+        for i_idx in range(best_escaped_start, best_escaped_end):
+            processed_escaped_indices.add(i_idx)
         logger.info(f"[Anno {anno_id} INFO] Đã đánh dấu để highlight: '{location_hint_raw[:30]}...' tại vị trí escaped {best_escaped_start}-{best_escaped_end}")
 
-    # 4. Xây dựng chuỗi HTML cuối cùng từ các điểm đã đánh dấu (Pass 2)
-    if not insertions: # Nếu không có gì để highlight
+    if not insertions: 
         logger.info("Không có annotation nào được áp dụng để highlight.")
         return escaped_contract_text.replace("\n", "<br>")
 
-    # Sắp xếp các điểm chèn theo vị trí bắt đầu để xây dựng tuần tự
     insertions.sort(key=lambda x: x[0])
-
     final_html_parts = []
-    current_pos = 0 # Vị trí đang xử lý trong `escaped_contract_text`
-
+    current_pos = 0 
     for esc_start, esc_end, start_tag, end_tag, anno_id in insertions:
-        # Thêm phần văn bản gốc (đã escape) từ vị trí cuối cùng đến đầu tag mới
         if esc_start > current_pos:
             final_html_parts.append(escaped_contract_text[current_pos:esc_start])
-
-        # Thêm tag mở
         final_html_parts.append(start_tag)
-        # Thêm nội dung gốc (đã escape) bên trong tag
         final_html_parts.append(escaped_contract_text[esc_start:esc_end])
-        # Thêm tag đóng
         final_html_parts.append(end_tag)
-
-        # Cập nhật vị trí hiện tại
         current_pos = esc_end
-
-    # Thêm phần văn bản còn lại sau tag cuối cùng
     if current_pos < len(escaped_contract_text):
         final_html_parts.append(escaped_contract_text[current_pos:])
-
-    # Nối các phần lại thành chuỗi HTML hoàn chỉnh
     highlighted_html_final = "".join(final_html_parts)
-
-    # 5. Thay thế ký tự xuống dòng bằng <br> và trả về
     return highlighted_html_final.replace("\n", "<br>")
