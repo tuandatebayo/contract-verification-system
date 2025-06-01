@@ -37,7 +37,7 @@ class PromptStore:
           "key_elements": ["...", "..."],
           "cited_legal_documents": ["...", "..."]
         }}
-        ```
+        ``` /nothink
         """
 
     def get_logic_analysis_prompt(self, contract_type: Optional[str], query: str, contract_text: str) -> str:
@@ -96,7 +96,7 @@ class PromptStore:
             }}
           ]
         }}
-        ```
+        ``` /nothink
         """
 
     def get_risk_analysis_prompt(self, contract_type: Optional[str], query: str, contract_text: str) -> str:
@@ -153,7 +153,7 @@ class PromptStore:
             }}
           ]
         }}
-        ```
+        ``` /nothink
         """
 
     def get_legal_review_prompt(self, contract_text: str, cited_laws_list: List[str]) -> str:
@@ -182,7 +182,7 @@ class PromptStore:
         - **Vị trí/Trích dẫn Nguyên văn:** (Sao chép **NGUYÊN VĂN, chính xác tuyệt đối (verbatim copy-paste)** câu hoặc đoạn văn bản có vấn đề từ hợp đồng gốc.)
         - **Lý do cần kiểm tra:** (Giải thích **ngắn gọn, rõ ràng** tại sao nó là 'cờ đỏ' theo tiêu chí a, b, c, hoặc d - ví dụ: 'Trích dẫn Điều X Luật Y sai cấu trúc/không tồn tại', 'Nội dung trái Điều Z Luật A', 'Thiếu [chi tiết] theo Luật B', 'Từ ngữ "[từ ngữ]" gây tranh cãi').
 
-        Nếu **không xác định được điểm nào**, trả về **chính xác** chuỗi: "{self.NO_LEGAL_ISSUES_FOUND_MSG}" **(Không thêm dòng nào khác).**
+        Nếu **không xác định được điểm nào**, trả về **chính xác** chuỗi: "{self.NO_LEGAL_ISSUES_FOUND_MSG}" **(Không thêm dòng nào khác).** /nothink
         """
 
     def get_synthesis_prompt(self,
@@ -223,6 +223,7 @@ class PromptStore:
 
         **V. Tổng hợp Đề xuất:**
         (Tổng hợp các đề xuất **khả thi và cụ thể** từ danh sách đề xuất được cung cấp và từ kết quả xác minh pháp lý có yêu cầu hành động rõ ràng (ví dụ: được đánh dấu '=>'). **Chỉ đưa ra đề xuất dựa trên thông tin đã cho.** Phân nhóm đề xuất nếu có thể, ví dụ: Bổ sung điều khoản, Làm rõ điều khoản, Sửa đổi điều khoản.)
+        /nothink
         """
         return prompt
 
