@@ -32,17 +32,13 @@ import config
 # Configure logging (giữ nguyên)
 logger = logging.getLogger(__name__)
 workflow_step_logger = logging.getLogger("WorkflowSteps")
-# ... (phần logging khác giữ nguyên)
 
 # --- Event Definitions ---
-
 class WorkflowStartEvent(StartEvent):
     contract_text: str
     query: str
     tools: List[BaseTool]
-    index: VectorStoreIndex # <<< Thêm index vào StartEvent
-
-# ... (Các Event Definitions khác giữ nguyên)
+    index: VectorStoreIndex
 class ContractTextEvent(Event):
     contract_text: str
 
@@ -66,7 +62,6 @@ class ProgressEvent(Event):
 # --- Workflow Definition ---
 
 class MultiAgentContractReviewWorkflow(Workflow):
-    # ... ( __init__ và _send_progress giữ nguyên)
     def __init__(
         self,
         progress_callback: Optional[Callable[[ProgressEvent], None]] = None,
@@ -89,7 +84,6 @@ class MultiAgentContractReviewWorkflow(Workflow):
             except Exception as e: logger.error(f"Error executing progress callback: {e}", exc_info=True)
 
     def _parse_law_citation_for_filters(self, text_to_parse: str) -> Dict[str, str]:
-        # (Giữ nguyên logic hàm này)
         filters = {}
         if not text_to_parse:
             return filters
@@ -135,7 +129,6 @@ class MultiAgentContractReviewWorkflow(Workflow):
 
     @step()
     async def analyze_context(self, ctx: Context, ev: ContractTextEvent) -> ContextAnalyzedEvent:
-        # (Giữ nguyên logic hàm này)
         workflow_step_logger.info("Starting step: analyze_context")
         query = await ctx.get("query")
         contract_text = ev.contract_text
@@ -178,7 +171,6 @@ class MultiAgentContractReviewWorkflow(Workflow):
         contract_type = ev.contract_type
         cited_laws_list = ev.cited_legal_documents
 
-        # ... (Phần gọi LLM cho logic, risk, legal_review giữ nguyên)
         logic_prompt = self.prompt_store.get_logic_analysis_prompt(
             contract_type=contract_type, query=query, contract_text=contract_text
         )
@@ -247,7 +239,6 @@ class MultiAgentContractReviewWorkflow(Workflow):
                 })
             else:
                 workflow_step_logger.info(f"Using RAG tool: {rag_tool.metadata.name}")
-                # ... (Phần parse potential_issues giữ nguyên)
                 potential_issues = []
                 try:
                     pattern = re.compile(
@@ -398,7 +389,6 @@ class MultiAgentContractReviewWorkflow(Workflow):
                         "source_nodes": source_nodes_info
                     })
                 workflow_step_logger.info("Finished RAG checks.")
-        # ... (Phần còn lại của detailed_analysis và các hàm helper giữ nguyên)
         workflow_step_logger.info(f"Finished step: detailed_analysis. Found {len(verified_legal_issues_list)} verified legal issues.")
         self._send_progress(ctx, "Detailed analysis checks completed.")
         return AnalysisResultsEvent(
@@ -408,7 +398,6 @@ class MultiAgentContractReviewWorkflow(Workflow):
         )
 
     def categorize_legal_issue(self, reason_llm_suggested: str) -> Tuple[str, str]:
-        # (Giữ nguyên logic hàm này)
         reason_lower = reason_llm_suggested.lower()
         if "không chính xác" in reason_lower or "không tồn tại" in reason_lower or "sai lệch" in reason_lower or "trích dẫn sai" in reason_lower:
             return "citation_accuracy", "Xác minh tính chính xác, sự tồn tại và nội dung của các văn bản pháp luật hoặc thông tin được trích dẫn/tham chiếu trong đoạn văn bản này."
@@ -426,7 +415,6 @@ class MultiAgentContractReviewWorkflow(Workflow):
     def analyze_rag_result_for_issue_type(
         self, issue_type: str, rag_result_text: str, verbatim_quote: str, reason_llm_suggested: str
     ) -> Tuple[str, str]:
-        # (Giữ nguyên logic hàm này)
         rag_result_lower = rag_result_text.lower()
         status = "UNKNOWN"
         summary = f"**Thông tin tra cứu (RAG):** '{rag_result_text}'. Cần người dùng xem xét dựa trên loại nghi vấn: {issue_type}."
